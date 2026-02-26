@@ -1,0 +1,517 @@
+---
+title: "TA FINAL"
+author: "sella"
+date: "2025-07-18"
+output: html_document
+---
+
+
+```{r}
+#MASS digunakan untuk fungsi plot boxcox()
+library(MASS)
+
+# Tseries digunakan untuk uji adf
+library(tseries)
+
+#untuk Arima
+library(forecast)
+
+# lmtest untuk signifikansi parameter
+library(lmtest)
+
+# FinTS untuk ArchTest
+library(FinTS)
+
+# TSA untuk acf dan pacf
+library(TSA)
+
+# pysch describe di statistik deskriptif
+library(psych)
+
+# rygarch untuk model GARCH dan GJR-GARCH
+library(rugarch)
+
+# Plot
+library(ggplot2)
+
+# dplyr (manipulasi kaya select dan filter)
+library(dplyr)
+
+# scale untuk sumbu grafik
+library(scales)
+
+# untuk manajemen tanggal dan waktu
+library(lubridate)
+
+# untuk menginput data
+library(readxl)
+```
+
+
+```{r}
+# data awal BBRI
+library(readxl)
+bbri <- read_excel("C:/Users/Lenovo/Downloads/data saham bbri.xlsx")
+head(bbri, n=10)
+tail(bbri, n=10)
+```
+
+
+```{r}
+# Data Harga Saham BBRI yang diubah ke bentuk time series
+bbri$Date <- as.Date(bbri$Date, format="%Y-%m-%d")
+bbri_ts <- ts(bbri$Close, start = c(2020, 60), frequency = 252)
+plot(bbri_ts, type="l", xlab="Tahun", ylab="Data Harga BBRI", main="Plot Data Harga Saham BBRI")
+```
+
+
+
+
+
+```{r}
+# Data return yang berasal dari data harga saham BBRI
+returnss <- diff(log(bbri_ts))
+returns <- ts(returnss, start = c(2020, 60))
+plot(returnss, type="l", xlab="Tahun", ylab="Data Return", main="Plot Data Return BBRI")
+```
+```{r}
+# 5 nilai terakhir data return
+tail(returnss, n=5)
+```
+
+
+```{r}
+# Statistik deskriptif data return saham BBRI
+library(psych)
+statistik <- describe(returns)
+statistik_deskriptif <- statistik[, c("n", "mean", "skew", "kurtosis")] 
+options(scipen = 999)
+statistik_deskriptif <- as.data.frame(lapply(statistik_deskriptif, function(x) round (x,4)))
+print(statistik_deskriptif)
+
+```
+
+
+```{r}
+library(tseries)
+# Uji ADF digunakan untuk mengecek stasioneritas rata-rata
+adf.test(returns)
+```
+
+
+```{r}
+library(MASS)
+library(forecast)
+# jika terdapat nilai negatif atau nol pada return maka diubah ke positif dahulu
+returns_min <- min(returns)
+epsilon <- 0.0001
+returns_positif <- if (returns_min <= 0) returns + abs(returns_min) + epsilon else returns
+
+# Lambda optimal
+lambda <- BoxCox.lambda(returns_positif, method = "loglik")
+print(paste("Nilai Lambda Optimal:", lambda))
+boxcox_result <- boxcox(lm(returns_positif ~ 1), 
+                        lambda = seq(-1, 1, 0.1), 
+                        plotit = FALSE)
+
+# Plot Boxcox
+plot(boxcox_result$x, boxcox_result$y, type = "l",
+     xlab = expression(lambda), ylab = "log-Likelihood",
+     main = "Plot Box-Cox", xaxt = "n")
+axis(1, at = seq(-1, 1, 0.2), las = 1, cex.axis = 0.8)
+abline(h = max(boxcox_result$y) - qchisq(0.95, df = 1)/2, 
+       lty = 2, col = "blue")
+abline(v = lambda, col = "red", lwd = 2, lty = 3)
+text(lambda, min(boxcox_result$y) + 50, 
+     labels = round(lambda, 2), 
+     col = "red", cex = 1, font = 2)
+```
+
+
+```{r}
+# Plot ACF dan PACF untuk menetukan model ARIMA terbaik
+library(TSA)
+acf(returns, main="ACF Data Return Saham BBRI")
+pacf(returns, main="PACF Data Return Saham BBRI")
+```
+
+
+```{r}
+library(forecast)
+# Membangun model ARIMA berdasarkan lag signifikan ACF dan PACF
+arma1 = Arima(returns, order=c(0,0,1))
+arma2 = Arima(returns, order=c(1,0,0))
+arma3 = Arima(returns, order=c(1,0,1))
+arma4 = Arima(returns, order=c(2,0,1))
+arma5 = Arima(returns, order=c(1,0,2))
+arma6 = Arima(returns, order=c(2,0,2))
+arma7 = Arima(returns, order=c(3,0,1))
+arma8 = Arima(returns, order=c(1,0,3))
+arma9 = Arima(returns, order=c(3,0,2))
+arma10 = Arima(returns, order=c(2,0,3))
+arma11 = Arima(returns, order=c(3,0,3))
+
+# Membandingkan nilai AIC unutuk memilih model terbaik
+model_arima <- list(arma1, arma2, arma3, arma4, arma5, arma6, arma7, arma8, arma9, arma10, arma11)
+for (i in 1:length(model_arima)) {
+  cat("Model ARMA", i, "\n")
+  cat("AIC:", AIC(model_arima[[i]]), "\n")
+  cat("------------------------\n")
+}
+model_terbaik <- which.min(sapply(model_arima, AIC))
+cat("Model terbaik: ARMA", model_terbaik, "\n")
+
+```
+
+
+```{r}
+library(lmtest)
+# Signifikansi Koefisien Parameter Model ARMA
+print(arma6)
+options(scipen = 0)
+coeftest(arma6)
+
+```
+
+
+```{r}
+# Uji diagnostik residual model ARMA(2,2)
+residuals_arima <- residuals(arma6)
+
+# Uji Ljung-Box terhadap residual ARMA
+ljung1_arma <- Box.test(residuals_arima, lag=1, type="Ljung-Box")
+print(ljung1_arma)
+ljung2_arma <- Box.test(residuals_arima, lag=11, type="Ljung-Box")
+print(ljung2_arma)
+ljung3_arma <- Box.test(residuals_arima, lag=19, type="Ljung-Box")
+print(ljung3_arma)
+
+library(tseries)
+# Uji Jarque-Bera terhadap residual ARMA
+jarque_bera <- jarque.bera.test(residuals_arima)
+print(jarque_bera)
+
+library(FinTS)
+# Uji Lagrange-Multiplier terhadap residual ARMA
+lm1_arma <- ArchTest(residuals_arima, lags = 3)
+print(lm1_arma)
+lm2_arma <- ArchTest(residuals_arima, lags = 5)
+print(lm2_arma)
+lm3_arma <- ArchTest(residuals_arima, lags = 7)
+print(lm3_arma)
+
+```
+
+
+```{r}
+# ACF dan PACF kuadrat residual ARIMA digunakan untuk menentukan orde model GARCH
+
+library(TSA)
+
+residual_kuadrat_arma <- residuals_arima^2
+acf(residual_kuadrat_arma, main="ACF Kuadrat Residual ARIMA")
+pacf(residual_kuadrat_arma, main="PACF Kuadrat Residual ARIMA")
+```
+
+
+```{r}
+# Membangun model ARMA(2,2)-GARCH dengan orde ARCH(1) hingga GARCH(2,2)
+library(rugarch)
+
+# Model GARCH 1
+#ARIMA(2,0,2)-GARCH(1,0)
+garch1 <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder = c(1,0)),
+  mean.model = list(armaOrder = c(2,2)),
+  distribution.model = "std"
+)
+model1_garch <- ugarchfit(spec = garch1, data = returns)
+
+#Model GARCH 2
+#ARIMA(2,0,2)-GARCH(0,1)
+garch2 <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder= c(0,1)),
+  mean.model = list(armaOrder = c(2,2)),
+  distribution.model = "std"
+)
+model2_garch <- ugarchfit(spec = garch2, data = returns)
+
+#Model GARCH 3
+#ARIMA(2,0,2)-GARCH(1,1)
+garch3 <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder= c(1,1)),
+  mean.model = list(armaOrder = c(2,2)),
+  distribution.model = "std"
+)
+model3_garch <- ugarchfit(spec = garch3, data = returns)
+
+#Model GARCH 4
+#ARIMA(2,0,2)-GARCH(1,2)
+garch4 <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder= c(1,2)),
+  mean.model = list(armaOrder = c(2,2)),
+  distribution.model = "std"
+)
+model4_garch <- ugarchfit(spec = garch4, data = returns)
+
+#Model GARCH 5
+#ARIMA(2,0,2)-GARCH(2,1)
+garch5 <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder= c(2,1)),
+  mean.model = list(armaOrder = c(2,2)),
+  distribution.model = "std"
+)
+model5_garch <- ugarchfit(spec = garch5, data = returns)
+
+#Model GARCH 6
+#ARIMA(2,0,2)-GARCH(2,2)
+garch6 <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder= c(2,2)),
+  mean.model = list(armaOrder = c(2,2)),
+  distribution.model = "std"
+)
+model6_garch <- ugarchfit(spec = garch6, data = returns)
+
+
+# Gunakan perbandingan AIC untuk memilih model terbaik
+GARCH <- list(model1_garch, model2_garch, model3_garch, model4_garch, model5_garch, model6_garch)
+for (i in 1:length(GARCH)) {
+  cat("Model GARCH", i, "\n")
+  cat("AIC:", infocriteria(GARCH[[i]])["Akaike", ], "\n")
+  cat("-------------------------\n")
+}
+
+
+```
+
+```{r}
+# Uji Signifikansi GARCH
+koefisien <- coef(model3_garch)
+rse <- sqrt(diag(vcov(model3_garch, robust = TRUE))) 
+
+uji_t <- koefisien / rse
+df <- length(returns) - length(koefisien)
+p_values <- 2 * pt(-abs(uji_t), df = df)
+
+keputusan <- ifelse(p_values < 0.05, "Signifikan", "Tidak Signifikan")
+
+hasil <- data.frame(
+  Parameter  = names(koefisien),
+  Koefisien  = round(koefisien, 5),
+  P_Value    = signif(p_values, digits = 2),
+  Keputusan  = keputusan
+)
+
+print(hasil, row.names = FALSE)
+
+```
+
+```{r}
+# Uji diagnostik residual ARIMA-GARCH
+# Uji Ljung-Box, ARCH LM dan Sign Size Bias dapat dilihat pada model berikut
+print(model3_garch)
+```
+
+
+```{r}
+# Membangun model ARMA(2,2)-GJR GARCH
+# Model ARMA(2,2)-GJR GARCH(1,0)
+gjr1 <- ugarchspec(
+  variance.model = list(model = "gjrGARCH", garchOrder = c(1, 0)),
+  mean.model = list(armaOrder = c(2, 2)),
+  distribution.model = "std"  
+)
+model_gjr1 <- ugarchfit(spec = gjr1, data = returns)
+
+# Model ARMA(2,2)-GJR GARCH(0,1)
+gjr2 <- ugarchspec(
+  variance.model = list(model = "gjrGARCH", garchOrder = c(0, 1)),
+  mean.model = list(armaOrder = c(2, 2)),
+  distribution.model = "std"  
+)
+model_gjr2 <- ugarchfit(spec = gjr2, data = returns)
+
+# Model ARMA(2,2)-GJR GARCH(1,1)
+gjr3 <- ugarchspec(
+  variance.model = list(model = "gjrGARCH", garchOrder = c(1, 1)),
+  mean.model = list(armaOrder = c(2, 2)),
+  distribution.model = "std"  
+)
+model_gjr3 <- ugarchfit(spec = gjr3, data = returns)
+
+# Model ARMA(2,2)-GJR GARCH(1,2)
+gjr4 <- ugarchspec(
+  variance.model = list(model = "gjrGARCH", garchOrder = c(1, 2)),
+  mean.model = list(armaOrder = c(2, 2)),
+  distribution.model = "std"  
+)
+
+model_gjr4 <- ugarchfit(spec = gjr4, data = returns)
+
+# Model ARMA(2,2)-GJR GARCH(2,1)
+gjr5 <- ugarchspec(
+  variance.model = list(model = "gjrGARCH", garchOrder = c(2, 1)),
+  mean.model = list(armaOrder = c(2, 2)),
+  distribution.model = "std"  
+)
+
+model_gjr5 <- ugarchfit(spec = gjr5, data = returns)
+
+# Model ARMA(2,2)-GJR GARCH(2,2)
+gjr6 <- ugarchspec(
+  variance.model = list(model = "gjrGARCH", garchOrder = c(2, 2)),
+  mean.model = list(armaOrder = c(2, 2)),
+  distribution.model = "std"  
+)
+
+model_gjr6 <- ugarchfit(spec = gjr6, data = returns)
+
+
+# Gunakan perbandingan AIC untuk memilih model terbaik
+GJR <- list(model_gjr1, model_gjr2, model_gjr3, model_gjr4, model_gjr5 ,model_gjr6)
+for (i in 1:length(GJR)) {
+  cat("Model GJR-GARCH", i, "\n")
+  cat("AIC:", infocriteria(GJR[[i]])["Akaike", ], "\n")
+  cat("-------------------------\n")
+}
+```
+
+
+```{r}
+# Uji signifikansi parameter model ARIMA-GJR GARCH
+model_gjr3 <- ugarchfit(spec = gjr3, data = returns)
+
+koefisien_gjr <- coef(model_gjr3)
+rse <- sqrt(diag(vcov(model_gjr3, robust = TRUE)))  
+
+uji_T <- koefisien_gjr / rse
+df <- length(returns) - length(koefisien_gjr) 
+nilai_pvalue <- 2 * pt(-abs(uji_T), df = df)
+
+keputusan_gjr <- ifelse(nilai_pvalue < 0.05, "Signifikan", "Tidak Signifikan")
+
+results_rse <- data.frame(
+  Parameter  = names(koefisien_gjr),
+  Koefisien  = round(koefisien_gjr, 5),
+  P_Value    = signif(nilai_pvalue, digits = 2),
+  Keputusan  = keputusan_gjr
+)
+
+print(results_rse, row.names = FALSE)
+
+```
+
+
+```{r}
+# Uji diagnostik residual ARIMA-GJR GARCH
+# Uji Ljung-Box dan ARCH LM dapat dilihat pada model berikut
+print(model_gjr3)
+```
+
+
+```{r}
+peramalan <- ugarchforecast(model_gjr3, n.ahead = 3)
+peramalan_volatilitas <- sigma(peramalan)
+print(peramalan_volatilitas)
+```
+```{r}
+# Volatilitas standar
+volatilitas_sd <- sd(returnss)
+print(volatilitas_sd)
+```
+```{r}
+library(dplyr)
+library(scales)
+library(lubridate)
+library(ggplot2)
+# Plot Volatilitas Historis dan Peramalan Volatilitas
+
+sigma_volatilitas <- sigma(model_gjr3)
+tanggal_volatilitas <- bbri$Date[-1]
+
+df_volatilitas <- data.frame(Date = tanggal_volatilitas, Volatilitas = sigma_volatilitas)
+
+df_vol_hist <- df_volatilitas %>%
+  filter(Date >= as.Date("2025-01-12") & Date <= as.Date("2025-01-31")) %>%
+  mutate(Tipe = "Historis")
+
+tgl_prediksi <- as.Date(c("2025-02-03", "2025-02-04", "2025-02-05"))
+sigma_prediksi <- c(0.02088469, 0.02091702, 0.02094819)
+
+df_prediksi <- data.frame(
+  Date = tgl_prediksi,
+  Volatilitas = sigma_prediksi,
+  Tipe = "Prediksi"
+)
+
+df_gabungann <- bind_rows(df_vol_hist, df_prediksi)
+ggplot(df_gabungann, aes(x = Date, y = Volatilitas, color = Tipe, group = 1)) +
+  geom_line(size = 1) +
+  scale_color_manual(values = c("Historis" = "black", "Prediksi" = "red")) +
+  scale_x_date(
+    date_breaks = "5 days",
+    labels = date_format("%d\n%b")
+  ) +
+  labs(
+    title = "PERAMALAN VOLATILITAS SAHAM BBRI (2025-02-03 hingga 2025-02-05)",
+    x = NULL,
+    y = "Volatilitas (σ)",
+    color = "Keterangan"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.background = element_blank(),
+    axis.line = element_line(color = "black"),
+    axis.text.x = element_text(angle = 0, vjust = 0.5),
+    axis.ticks.x = element_line(color = "black", size = 0.3),
+    legend.position = "right"
+  ) +
+  geom_vline(xintercept = as.numeric(as.Date("2025-02-03")), 
+             linetype = "dashed", color = "darkgray") +
+  annotate("text", x = as.Date("2025-02-03"), 
+           y = min(df_gabungann$Volatilitas), 
+           label = "2025", vjust = 5.5, size = 3)
+```
+
+
+```{r}
+# Nilai Volatilitas Dengan Return Terbaru
+library(readxl)
+
+data_aktual <- read_excel("C:/Users/Lenovo/Downloads/data terbaru bri.xlsx") %>%
+  select(Date, Close)
+
+data_aktual$Date <- as.Date(data_aktual$Date)
+
+log_returns <- diff(log(data_aktual$Close))
+
+gjr_terbaru <- ugarchspec(
+  variance.model = list(model = "gjrGARCH", garchOrder = c(1, 1)),
+  mean.model = list(armaOrder = c(2, 2)),
+  distribution.model = "std"
+)
+
+model_gjr_terbaru <- ugarchfit(spec = gjr_terbaru, data = log_returns)
+
+sigma_terbaru <- sigma(model_gjr_terbaru)
+tanggal <- data_aktual$Date[-1]  
+
+dataframe_vol <- data.frame(Date = tanggal, Volatilitas = sigma_terbaru)
+tail(dataframe_vol, 3)
+
+```
+
+
+```{r}
+# MAPE
+peramalan_volatilitas <- as.numeric(sigma(peramalan)) 
+
+aktual_volatilitas <- tail(dataframe_vol$Volatilitas, 3)
+mape <- mean(abs((aktual_volatilitas - peramalan_volatilitas) / aktual_volatilitas)) * 100
+
+cat("MAPE:", round(mape, 2), "%\n")
+
+
+```
